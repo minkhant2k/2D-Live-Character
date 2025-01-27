@@ -1,5 +1,12 @@
 {
   "dependencies": {
+    "com.rimurudev.unity-skip-splashscreen": {
+      "version": "https://github.com/RimuruDev/UnitySkipSplashScreen.git",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "3cd6028bf0643266b53609a3d8be0a556c055736"
+    },
     "com.unity.2d.animation": {
       "version": "9.1.3",
       "depth": 1,

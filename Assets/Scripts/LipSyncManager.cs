@@ -3,30 +3,48 @@ using System.Collections.Generic;
 using UnityEngine;
 using Live2D.Cubism.Core;  // Ensure Cubism SDK is installed and imported
 using Live2D.Cubism.Framework;
+using System.Linq;
 
 public class LipSyncManager : MonoBehaviour
 {
 
-    private CubismParameter mouthOpen; // Parameter controlling mouth openness
-    private CubismParameter mouthForm; // Parameter controlling mouth shape
-    private CubismModel cubismModel;
+    [SerializeField] private CubismParameter PARAM_MOUTH_OPEN_Y; // Parameter controlling mouth openness
+    [SerializeField] private CubismParameter PARAM_MOUTH_FORM; // Parameter controlling mouth shape
+    [SerializeField] private CubismModel cubismModel;
+
+    private Coroutine lipSyncCoroutine;
+
+
+    private float minMouthOpenY = 0.0f;    // Min closed mouth height (mouth closed)
+    private float neutralMouthForm = 1f; // Neutral mouth form (mouth normal)
+
+
+
+
 
     // Phoneme-to-Mouth Mapping
     private readonly Dictionary<string, (float open, float form)> phonemeMap = new Dictionary<string, (float, float)>()
 {
-    { "A", (0.9f, 0.6f) },   // Open wide
-    { "E", (0.7f, 0.4f) },   // Slightly open
-    { "O", (0.5f, 1.0f) },   // Rounded
-    { "F", (0.3f, 0.8f) },   // Teeth showing
-    { "X", (0.0f, 0.0f) },   // Closed mouth
-    { "U", (0.6f, 0.9f) },   // Rounded with moderate open
-
-    // Add missing phonemes with appropriate mappings
-    { "H", (0.4f, 0.3f) },   // Slightly open mouth, breathy
-    { "L", (0.5f, 0.2f) },   // Tongue behind teeth (use slight open)
-    { "W", (0.6f, 1.0f) },   // Rounded lips, moderate open
-    { "R", (0.5f, 0.7f) },   // Slightly rounded mouth, mid-open
-    { "Y", (0.7f, 0.9f) }    // Open, with rounded shape
+    { "A", (0.85f, 0.8f) },  // Wide open (as in "father")
+    { "E", (0.7f, 0.5f) }, // Slightly open (as in "bed")
+    { "I", (0.6f, 0.3f) },  // Narrow, stretched horizontally (as in "machine")
+    { "O", (0.8f, 0.7f) },  // Round lips (as in "go")
+    { "U", (0.65f, 1.0f) }, // Rounded with moderate opening (as in "blue")
+    { "M", (0.1f, 0.1f) },  // Closed mouth (as in "muff")
+    { "F", (0.4f, 0.6f) },  // Upper teeth touching lip (as in "fun")
+    { "S", (0.5f, 0.5f) },  // Slightly open, showing teeth (as in "see")
+    { "X", (0.0f, 0.0f) },  // Default closed mouth for unrecognized sounds
+    { "AA", (1.0f, 0.9f) }, // Open back unrounded vowel (as in "father")
+    { "AE", (1.0f, 0.6f) }, // Open front unrounded vowel (as in "cat")
+    { "AY", (1.0f, 0.7f) }, // Diphthong (as in "say")
+    { "AW", (1.0f, 0.8f) }, // Diphthong with rounding (as in "how")
+    { "EH", (0.85f, 0.4f) },// Open-mid front unrounded vowel (as in "bed")
+    { "OW", (1.0f, 0.9f) }, // Diphthong with rounding (as in "go")
+    { "OY", (1.0f, 0.8f) }, // Diphthong with rounding (as in "boy")
+    { "TH", (0.5f, 0.4f) }, // Voiced dental fricative (as in "this")
+    { "SH", (0.5f, 0.5f) }, // Voiceless postalveolar fricative (as in "she")
+    { "CH", (0.5f, 0.6f) }, // Voiceless postalveolar affricate (as in "cheese")
+    { "NG", (0.2f, 0.2f) }
 };
 
 
@@ -40,127 +58,160 @@ public class LipSyncManager : MonoBehaviour
             Debug.LogError("CubismModel component not found!");
             return;
         }
-        // Debug all parameters in the Cubism model
-        // foreach (var param in cubismModel.Parameters)
-        // {
-        //     Debug.Log($"Found parameter: {param.Id}");
-        // }
+
 
         // Find mouth parameters by their IDs
-        mouthOpen = cubismModel.Parameters.FindById("PARAM_MOUTH_OPEN_Y");
-        mouthForm = cubismModel.Parameters.FindById("PARAM_MOUTH_FORM");
+        PARAM_MOUTH_OPEN_Y = cubismModel.Parameters.FindById("PARAM_MOUTH_OPEN_Y");
+        PARAM_MOUTH_FORM = cubismModel.Parameters.FindById("PARAM_MOUTH_FORM");
 
-        // Debug parameter assignments
-        if (mouthOpen != null && mouthForm != null)
+        // Set the initial mouth state to closed
+        if (PARAM_MOUTH_OPEN_Y != null)
         {
-            mouthOpen.Value = 0.5f;
-            mouthForm.Value = 1.0f;
-            Debug.Log($"MouthOpen assigned: {mouthOpen.Id}");
-            Debug.Log($"MouthForm assigned: {mouthForm.Id}");
+            PARAM_MOUTH_OPEN_Y.Value = minMouthOpenY;
+            Debug.Log($"MouthOpen assigned: {PARAM_MOUTH_OPEN_Y.Id}");  // Set mouth to closed initially
+        }
+        if (PARAM_MOUTH_FORM != null)
+        {
+            PARAM_MOUTH_FORM.Value = neutralMouthForm;// Set mouth form to neutral initially
+            Debug.Log($"MouthForm assigned: {PARAM_MOUTH_OPEN_Y.Id}");
+        }
+        // string text = "Hello, My name is min khant. I'm a flutter developer. I from Myanmar.";
+        // StartTalking(text, 1.5f);
 
-        }
-        else
-        {
-            Debug.Log("Params not assigned");
-        }
 
     }
 
-    // Public method to start lip-sync with phonemes
-    public void StartLipSync(string[] phonemes)
+
+    // Method to start talking animation manually
+    public void StartTalking(string text, float duration)
     {
-        // StopAllCoroutines(); // Stop any ongoing lip-sync
-        if (mouthOpen == null || mouthForm == null)
+
+        if (lipSyncCoroutine != null)
         {
-            Debug.LogError("Mouth parameters are null. Cannot start lip sync.");
-            return;
+            StopCoroutine(lipSyncCoroutine); // Safely stop previous coroutine
+            Debug.Log($"StartLipSync is still playing");
+            lipSyncCoroutine = null;
         }
-        StartCoroutine(PlayLipSync(phonemes));
+        UpdateMouthToNeutral();
+        Debug.Log($"StartLipSync called with text: {text}, duration: {duration}");
+        string[] phoneme = ParseTextToPhonemes(text);
+        lipSyncCoroutine = StartCoroutine(LipSyncAnimation(phoneme, duration));
+
     }
 
-    // // Coroutine to animate phonemes
-    // private IEnumerator PlayLipSync(string[] phonemes)
-    // {
-    //     foreach (string phoneme in phonemes)
-    //     {
-    //         if (phonemeMap.ContainsKey(phoneme))
-    //         {
-    //             var (open, form) = phonemeMap[phoneme];
-
-    //             if (mouthOpen != null && mouthForm != null)
-    //             {
-    //                 // Log parameter values
-    //                 Debug.Log($"Updating phoneme: {phoneme} - Open: {open}, Form: {form}");
-    //                 mouthOpen.Value = open;
-    //                 mouthForm.Value = form;
-    //             }
-    //             else
-    //             {
-    //                 Debug.LogError("Mouth parameters are null.");
-    //                 yield break;
-    //             }
-    //         }
-    //         else
-    //         {
-    //             Debug.LogWarning($"Phoneme not recognized: {phoneme}. Defaulting to closed mouth.");
-
-    //         }
-
-    //         yield return new WaitForSeconds(0.1f); // Adjust timing for smoother lip-sync
-    //     }
-
-    //     // Reset the mouth at the end
-    //     if (mouthOpen != null) mouthOpen.Value = 0f;
-    //     if (mouthForm != null) mouthForm.Value = 0f;
-    // }
-    private IEnumerator PlayLipSync(string[] phonemes)
+    private string[] ParseTextToPhonemes(string text)
     {
+        // Improved phoneme parsing (could be replaced with a more sophisticated method)
+        return text.ToUpper().Select(c => c.ToString()).ToArray();
+    }
+
+
+
+    // Method to stop talking animation
+    public void StopTalking()
+    {
+        Debug.Log("StopLipSync called. Stopping lip-sync.");
+        if (lipSyncCoroutine != null)
+        {
+            StopCoroutine(lipSyncCoroutine);
+            lipSyncCoroutine = null;
+            Debug.Log("Stopping lip-sync.");
+        }
+        //    lipSyncCoroutine = StartCoroutine(ResetMouthAfterDelay());  // Small delay for smoother stop
+
+        UpdateMouthToNeutral();
+        Debug.Log("Mouth has been reset to neutral state.");
+
+    }
+
+    private IEnumerator ResetMouthAfterDelay()
+    {
+        yield return new WaitForSeconds(0.2f);
+
+        UpdateMouthToNeutral();
+    }
+
+    // Update the mouth parameters in Cubism model
+    void UpdateMouthToNeutral()
+    {
+        // Set the new values for the mouth parameters in Cubism
+        PARAM_MOUTH_OPEN_Y.Value = minMouthOpenY;
+        PARAM_MOUTH_FORM.Value = neutralMouthForm;
+        cubismModel.ForceUpdateNow();
+
+        Debug.Log($"Mouth reset: Open Y = {minMouthOpenY}, Form = {neutralMouthForm}");
+    }
+
+
+    private IEnumerator LipSyncAnimation(string[] phonemes, float totalDuration)
+    {
+
+        float phonemeDuration = totalDuration / phonemes.Length;
+
         foreach (var phoneme in phonemes)
         {
-            Debug.Log($"Processing phoneme: {phoneme}");
-
-            if (!phonemeMap.TryGetValue(phoneme, out var values))
+            // Get the values for the current phoneme (open mouth and form)
+            if (phonemeMap.TryGetValue(phoneme, out var values))
             {
-                Debug.LogWarning($"Phoneme not recognized: {phoneme}. Defaulting to closed mouth.");
-                values = phonemeMap["X"];
+                // Animate mouth based on the phoneme values (open and form)
+                float mouthOpenY = values.open;
+                float mouthForm = values.form;
+
+                // Smoothly transition to the new mouth values
+                yield return StartCoroutine(AnimateMouth(initialMouthOpen: PARAM_MOUTH_OPEN_Y.Value,
+                                                          initialMouthForm: PARAM_MOUTH_FORM.Value,
+                                                          targetMouthOpen: mouthOpenY,
+                                                          targetMouthForm: mouthForm,
+                                                          duration: phonemeDuration));
             }
             else
             {
-                Debug.Log($"Mouth Open: {values.open}");
-                Debug.Log($"Mouth Form: {values.form}");
+                Debug.LogWarning($"Unrecognized phoneme: {phoneme}. Defaulting to closed mouth.");
+                // Animate to closed mouth if unrecognized
+                yield return StartCoroutine(AnimateMouth(initialMouthOpen: PARAM_MOUTH_OPEN_Y.Value,
+                                                          initialMouthForm: PARAM_MOUTH_FORM.Value,
+                                                          targetMouthOpen: 0.3f,
+                                                          targetMouthForm: 0.5f,
+                                                          duration: phonemeDuration));
             }
 
-            // Smoothly transition to new values
-            float duration = 0.1f; // The time it takes to transition to the new values
-            float elapsedTime = 0f;
-
-            float initialMouthOpen = mouthOpen.Value;
-            float initialMouthForm = mouthForm.Value;
-
-            while (elapsedTime < duration)
-            {
-                mouthOpen.Value = Mathf.Lerp(initialMouthOpen, values.open, elapsedTime / duration);
-                mouthForm.Value = Mathf.Lerp(initialMouthForm, values.form, elapsedTime / duration);
-
-                cubismModel.ForceUpdateNow(); // Update the model
-
-                elapsedTime += Time.deltaTime; // Increment the time elapsed
-                yield return null; // Wait for the next frame
-            }
-
-            mouthOpen.Value = values.open;
-            mouthForm.Value = values.form;
-
-            cubismModel.ForceUpdateNow();
-
-            // Allow changes to propagate
-            yield return new WaitForSeconds(0.2f);
-            Debug.Log($"Mouth Open: {mouthOpen.Value}, Mouth Form: {mouthForm.Value}");
+            // Wait for a brief moment before moving to the next phoneme for smoother transitions
+            yield return new WaitForSeconds(0.1f); // Adjust this delay as needed
         }
-        // Reset mouth to closed at the end
-        if (mouthOpen == null) mouthOpen.Value = 0f;
-        if (mouthForm == null) mouthForm.Value = 0f;
-        cubismModel.ForceUpdateNow();
+
+        // Reset mouth to neutral after all phonemes
+        yield return StartCoroutine(AnimateMouth(initialMouthOpen: PARAM_MOUTH_OPEN_Y.Value,
+                                                  initialMouthForm: PARAM_MOUTH_FORM.Value,
+                                                  targetMouthOpen: 0f,
+                                                  targetMouthForm: 0f,
+                                                  duration: 0.3f)); // Duration for resetting
+
+        Debug.Log("LipSyncAnimation completed.");
+        lipSyncCoroutine = null;
+    }
+
+    // Separate coroutine for animating mouth transitions
+    private IEnumerator AnimateMouth(float initialMouthOpen, float initialMouthForm, float targetMouthOpen, float targetMouthForm, float duration)
+    {
+        float elapsedTime = 0.0f;
+
+        while (elapsedTime < duration)
+        {
+            // Lerp between the current and new values for mouth open and form
+            PARAM_MOUTH_OPEN_Y.Value = Mathf.Lerp(initialMouthOpen, targetMouthOpen, elapsedTime / duration);
+            PARAM_MOUTH_FORM.Value = Mathf.Lerp(initialMouthForm, targetMouthForm, elapsedTime / duration);
+
+            cubismModel.ForceUpdateNow();  // Update the model
+
+            elapsedTime += Time.deltaTime * 0.155f;  // Increment elapsed time
+
+            yield return null;  // Wait for the next frame
+        }
+
+        // Ensure final values are set
+        PARAM_MOUTH_OPEN_Y.Value = targetMouthOpen;
+        PARAM_MOUTH_FORM.Value = targetMouthForm;
+        cubismModel.ForceUpdateNow(); // Update model immediately
     }
 
 }
